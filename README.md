@@ -21,12 +21,10 @@ pip install -r requirements.txt
 streamlit run app.py
 
 
-
+----------------
 ## Dataset
 PlantVillage dataset used for training.
 
-##Author
-Nehal Garg
 
 
 
