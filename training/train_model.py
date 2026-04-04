@@ -4,6 +4,11 @@ from tensorflow.keras.applications import MobileNetV2
 from tensorflow.keras.layers import Dense, GlobalAveragePooling2D, Dropout
 from tensorflow.keras.models import Model
 
+# NEW IMPORTS (for GMM)
+from sklearn.mixture import GaussianMixture
+import numpy as np
+import pickle
+
 # ---------------- SETTINGS ----------------
 IMG_SIZE = (224, 224)
 BATCH_SIZE = 32
@@ -67,7 +72,7 @@ model.compile(
 )
 
 # ---------------- TRAIN (STAGE 1) ----------------
-print(" Training Stage 1 (Frozen Base Model)...")
+print("Training Stage 1 (Frozen Base Model)...")
 
 model.fit(
     train_data,
@@ -76,9 +81,9 @@ model.fit(
 )
 
 # ---------------- FINE-TUNE ----------------
-print(" Fine-tuning...")
+print("Fine-tuning...")
 
-for layer in base_model.layers[-30:]:  # unfreeze last layers
+for layer in base_model.layers[-30:]:
     layer.trainable = True
 
 model.compile(
@@ -97,4 +102,54 @@ model.fit(
 # ---------------- SAVE MODEL ----------------
 model.save("model/plant_disease_model.h5")
 
-print("Training Complete & Model Saved!")
+print("CNN Training Complete & Model Saved!")
+
+# ============================================================
+# 🔥 NEW PART: FEATURE EXTRACTION + GMM (AML INTEGRATION)
+# ============================================================
+
+print("\nExtracting features for GMM...")
+
+# Feature extractor model (remove last classification layer)
+feature_model = Model(inputs=model.input, outputs=model.layers[-2].output)
+
+features = []
+labels = []
+
+# Reset generator to start
+train_data.reset()
+
+# Extract features batch by batch
+for i in range(len(train_data)):
+    x_batch, y_batch = train_data[i]
+    
+    feat = feature_model.predict(x_batch)
+    features.append(feat)
+    
+    labels.append(np.argmax(y_batch, axis=1))
+
+# Convert to numpy
+features = np.vstack(features)
+labels = np.hstack(labels)
+
+print("Feature shape:", features.shape)
+
+# ---------------- APPLY GMM ----------------
+print("Applying GMM clustering...")
+
+gmm = GaussianMixture(n_components=2, random_state=42)
+gmm.fit(features)
+
+# Save GMM model
+with open("model/gmm_model.pkl", "wb") as f:
+    pickle.dump(gmm, f)
+
+print("GMM model saved!")
+
+# ---------------- OPTIONAL: Show cluster distribution ----------------
+clusters = gmm.predict(features)
+
+unique, counts = np.unique(clusters, return_counts=True)
+print("\nCluster Distribution:")
+for u, c in zip(unique, counts):
+    print(f"Cluster {u}: {c} samples")
