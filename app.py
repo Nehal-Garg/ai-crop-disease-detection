@@ -5,15 +5,12 @@ from PIL import Image
 import base64
 import plotly.express as px
 import pickle
-import matplotlib.pyplot as plt
-from sklearn.decomposition import PCA
-from matplotlib.patches import Ellipse
 
 # ---------------- CONFIG ----------------
 st.set_page_config(page_title="AI Crop Doctor", layout="wide")
 
 # ---------------- LOAD MODELS ----------------
-model = tf.keras.models.load_model("model/plant_disease_model.h5")
+model = tf.keras.models.load_model("model/plant_disease_model.h5", compile=False)
 
 with open("model/gmm_model.pkl", "rb") as f:
     gmm = pickle.load(f)
@@ -37,29 +34,72 @@ class_names = [
 
 # ---------------- BACKGROUND ----------------
 def set_bg():
-    with open("static/background.jpeg", "rb") as f:
-        encoded = base64.b64encode(f.read()).decode()
+    try:
+        with open("static/background.jpeg", "rb") as f:
+            encoded = base64.b64encode(f.read()).decode()
 
-    st.markdown(f"""
-    <style>
-    .stApp {{
-        background-image: url("data:image/jpeg;base64,{encoded}");
-        background-size: cover;
-    }}
-    .block-container {{
-        background: rgba(255,255,255,0.94);
-        padding: 30px;
-        border-radius: 15px;
-        max-width: 1400px;
-    }}
-    h1,h2,h3,p,div {{ color:black !important; }}
-    </style>
-    """, unsafe_allow_html=True)
+        st.markdown(f"""
+        <style>
+        .stApp {{
+            background-image: url("data:image/jpeg;base64,{encoded}");
+            background-size: cover;
+        }}
+        .block-container {{
+            background: rgba(255,255,255,0.95);
+            padding: 30px;
+            border-radius: 15px;
+            max-width: 1400px;
+        }}
+        h1,h2,h3,p,div {{ color:black !important; }}
+        </style>
+        """, unsafe_allow_html=True)
+    except:
+        pass
 
 set_bg()
 
+# ---------------- HELPERS ----------------
+def get_crop(name):
+    return name.split("_")[0]
+
+def get_disease(name):
+    return " ".join(name.split("_")[1:])
+
+def get_info(name):
+    name = name.lower()
+
+    if "healthy" in name:
+        return ("Healthy plant",
+                "Maintain watering & sunlight",
+                "Use balanced fertilizer")
+
+    elif "early_blight" in name:
+        return ("Fungal disease (Early Blight)",
+                "Avoid water on leaves",
+                "Use fungicide spray")
+
+    elif "late_blight" in name:
+        return ("Severe fungal infection",
+                "Remove infected leaves",
+                "Apply fungicide")
+
+    elif "bacterial" in name:
+        return ("Bacterial infection",
+                "Remove infected parts",
+                "Use copper spray")
+
+    elif "virus" in name:
+        return ("Viral infection",
+                "Remove plant",
+                "Control insects")
+
+    else:
+        return ("Plant disease detected",
+                "Monitor plant",
+                "Use fertilizer")
+
 # ---------------- TITLE ----------------
-st.title("AI Crop Disease Detection Dashboard")
+st.title("🌿 AI Crop Disease Detection Dashboard")
 
 # ---------------- INPUT ----------------
 col1, col2 = st.columns([1,2])
@@ -74,161 +114,132 @@ with col1:
     else:
         file = upload
 
-# ---------------- HELPERS ----------------
-def get_crop(name):
-    return name.split("_")[0]
-
-def get_disease(name):
-    parts = name.split("_")
-    return " ".join(parts[1:]) if len(parts) > 1 else name
-
-def get_info(name):
-    name = name.lower()
-
-    if "healthy" in name:
-        return ("Healthy plant","Maintain watering & sunlight","Use balanced fertilizer")
-
-    if "blight" in name:
-        return ("Fungal infection","Avoid excess moisture","Use fungicide")
-
-    if "bacterial" in name:
-        return ("Bacterial infection","Remove infected leaves","Use copper spray")
-
-    if "virus" in name:
-        return ("Viral infection","Remove infected plant","Control insects")
-
-    return ("General stress","Check soil & water","Use fertilizer")
-
 # ---------------- PROCESS ----------------
 if file:
     image = Image.open(file)
 
     with col1:
-        st.image(image, caption="Input Image", use_container_width=True)
+        st.image(image, caption="Input Image")
 
+    # Preprocess
     img = image.resize((224,224))
     img = np.array(img)/255.0
     img = np.expand_dims(img, axis=0)
 
-    # ---------------- CNN ----------------
+    # CNN Prediction
     prediction = model.predict(img)[0]
-    confidence = np.max(prediction)
     best_idx = np.argmax(prediction)
+    confidence = prediction[best_idx]
+
     best_class = class_names[best_idx]
     crop_name = get_crop(best_class)
+    disease_name = get_disease(best_class)
 
-    # ---------------- FEATURE EXTRACTION ----------------
+    # Feature extraction
     features = feature_extractor.predict(img)
 
-    # ---------------- GMM ----------------
+    # GMM
     cluster = gmm.predict(features)[0]
     probs = gmm.predict_proba(features)[0]
 
     with col2:
 
-        if confidence < 0.75:
-            st.error("Upload a proper plant image")
-        else:
-            # ---------------- RESULT ----------------
-            st.success(f"{crop_name}")
-            st.metric("Confidence", f"{confidence*100:.2f}%")
+        # ---------------- RESULT ----------------
+        st.success(f"🌿 Crop: {crop_name}")
+        st.subheader(f"🦠 Disease: {disease_name}")
+        st.metric("Confidence", f"{confidence*100:.2f}%")
 
-            # ---------------- AML INSIGHT ----------------
-            st.markdown("### AML Insight (GMM)")
-            st.write(f"Cluster: {cluster}")
-            st.write(f"Cluster Confidence: {max(probs)*100:.2f}%")
+        # ---------------- BAR GRAPH ----------------
+        st.markdown("### Top Predictions")
 
-            # ---------------- BAR GRAPH ----------------
-            st.markdown("### Crop Confidence")
-            top_idx = prediction.argsort()[-5:][::-1]
+        top_idx = prediction.argsort()[-3:][::-1]
+        labels = [get_disease(class_names[i]) for i in top_idx]
+        values = [prediction[i]*100 for i in top_idx]
 
-            crops = [get_crop(class_names[i]) for i in top_idx]
-            probs_plot = [prediction[i] for i in top_idx]
+        fig_bar = px.bar(
+            x=labels,
+            y=values,
+            text=[f"{v:.1f}%" for v in values]
+        )
 
-            fig_bar = px.bar(
-                x=crops,
-                y=probs_plot,
-                color=crops,
-                text=[f"{p*100:.1f}%" for p in probs_plot]
-            )
-            st.plotly_chart(fig_bar, use_container_width=True)
+        fig_bar.update_layout(
+            yaxis_title="Confidence (%)",
+            xaxis_title="Disease"
+        )
 
-            # ---------------- PIE CHART ----------------
-            st.markdown("### Disease Distribution")
-            top_idx = prediction.argsort()[-3:][::-1]
+        st.plotly_chart(fig_bar, use_container_width=True)
 
-            diseases = [get_disease(class_names[i]) for i in top_idx]
-            values = [prediction[i] for i in top_idx]
+        # ---------------- GMM INSIGHT ----------------
+        st.markdown("### Advanced ML Insight (GMM)")
 
-            fig_pie = px.pie(names=diseases, values=values)
-            st.plotly_chart(fig_pie, use_container_width=True)
+        st.info(f"""
+        Cluster Assigned: **{cluster}**  
+        Cluster Confidence: **{max(probs)*100:.2f}%**
 
-            # ---------------- GMM VISUALIZATION ----------------
-            st.markdown("### GMM Cluster Visualization")
+        👉 Groups similar disease patterns  
+        👉 Works alongside CNN for deeper analysis
+        """)
 
-            num_points = 150
-            noise = np.random.normal(0, 0.3, (num_points, features.shape[1]))
+        # ---------------- GMM GRAPH ----------------
+        st.markdown("### GMM Feature Visualization")
+
+        try:
+            import matplotlib.pyplot as plt
+            from sklearn.decomposition import PCA
+
+            num_points = 50
+            noise = np.random.normal(0, 0.05, (num_points, features.shape[1]))
             sample_features = features + noise
 
-            pca = PCA(n_components=2)
-            reduced = pca.fit_transform(sample_features)
+            all_features = np.vstack([features, sample_features])
 
-            clusters = gmm.predict(sample_features)
+            if all_features.shape[0] > 1:
+                pca = PCA(n_components=2)
+                reduced = pca.fit_transform(all_features)
 
-            fig, ax = plt.subplots(figsize=(6,5))
-            colors = ['blue', 'orange', 'green']
-
-            for i in np.unique(clusters):
-                pts = reduced[clusters == i]
+                fig, ax = plt.subplots(figsize=(6,5))
 
                 ax.scatter(
-                    pts[:, 0], pts[:, 1],
-                    label=f'Cluster {i}',
-                    alpha=0.7,
-                    color=colors[i % len(colors)],
-                    s=40
+                    reduced[1:, 0],
+                    reduced[1:, 1],
+                    color="blue",
+                    alpha=0.5,
+                    label="Cluster Spread"
                 )
 
-                if len(pts) > 2:
-                    cov = np.cov(pts.T)
-                    mean = np.mean(pts, axis=0)
+                ax.scatter(
+                    reduced[0, 0],
+                    reduced[0, 1],
+                    color="red",
+                    s=120,
+                    label="Input Image"
+                )
 
-                    vals, vecs = np.linalg.eigh(cov)
-                    angle = np.degrees(np.arctan2(*vecs[:,0][::-1]))
+                ax.set_title("GMM Feature Space")
+                ax.set_xlabel("PCA Component 1")
+                ax.set_ylabel("PCA Component 2")
+                ax.legend()
 
-                    width, height = 2 * np.sqrt(vals)
+                st.pyplot(fig)
+            else:
+                st.warning("Not enough data for visualization")
 
-                    ellipse = Ellipse(
-                        xy=mean,
-                        width=width,
-                        height=height,
-                        angle=angle,
-                        edgecolor=colors[i % len(colors)],
-                        fc='none',
-                        lw=2
-                    )
-                    ax.add_patch(ellipse)
+        except Exception:
+            st.warning("Visualization unavailable")
 
-            ax.set_title("GMM Clustering on CNN Features")
-            ax.set_xlabel("PCA Component 1")
-            ax.set_ylabel("PCA Component 2")
-            ax.legend()
+        # ---------------- ANALYSIS ----------------
+        st.markdown("### Analysis")
 
-            st.pyplot(fig)
+        reason, precaution, fertilizer = get_info(best_class)
 
-            # ---------------- ANALYSIS ----------------
-            st.markdown("### Analysis")
+        c1, c2, c3 = st.columns(3)
 
-            reason, precaution, fertilizer = get_info(best_class)
-
-            c1, c2, c3 = st.columns(3)
-
-            with c1:
-                st.warning(f"Cause\n\n{reason}")
-            with c2:
-                st.info(f"Precaution\n\n{precaution}")
-            with c3:
-                st.success(f"Fertilizer\n\n{fertilizer}")
+        with c1:
+            st.warning(f"Cause\n\n{reason}")
+        with c2:
+            st.info(f"Precaution\n\n{precaution}")
+        with c3:
+            st.success(f"Fertilizer\n\n{fertilizer}")
 
 else:
     st.info("Upload a plant leaf image to start")
